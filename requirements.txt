@@ -1,0 +1,5 @@
+# Core dependency
+torch
+
+# Add other dependencies if needed, e.g., for specific FlashAttention implementations
+# flash-attn # Example if using the flash-attn library
