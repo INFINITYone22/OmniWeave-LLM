@@ -96,7 +96,7 @@ print(f"Generated image shape: {generated_image.shape}")
 
 ## License
 
-Consider adding a license file (e.g., MIT, Apache 2.0) to define how others can use your code.
+Apache 2.0
 
 ## Contributing
 
