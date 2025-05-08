@@ -1,3 +1,5 @@
+# Copyright 2024 INFINITYone22 github. All rights reserved.
+
 import torch
 import torch.nn as nn
 import math
@@ -8,7 +10,7 @@ from dataclasses import dataclass
 @dataclass
 class ModelConfig:
     """Configuration for the Multimodal LLM."""
-    vocab_size: int = 58192  # 50,000 text + 8,192 image tokens
+    text_vocab_size: int = 128000  # Vocabulary size for text tokens
     dim: int = 8192
     num_layers: int = 110
     num_heads: int = 64
@@ -16,7 +18,7 @@ class ModelConfig:
     max_seq_len: int = 8192
     dropout: float = 0.1
     # VQ-VAE specific
-    vq_codebook_size: int = 8192
+    vq_codebook_size: int = 8192  # Defines the number of image tokens
     vq_codebook_dim: int = 512
     # Image Encoder specific (ViT)
     image_size: int = 256 # Example image size
@@ -37,12 +39,12 @@ class FlashAttention(nn.Module):
     """
     def __init__(self, dim: int, num_heads: int, head_dim: int):
         """
-        Initializes the FlashAttention module.
+        Initialize FlashAttention.
 
         Args:
-            dim: The input dimension.
-            num_heads: The number of query heads.
-            head_dim: The dimension of each head.
+            dim: Input dimension.
+            num_heads: Number of query heads.
+            head_dim: Dimension of each head.
         """
         super().__init__()
         self.dim = dim
@@ -59,11 +61,11 @@ class FlashAttention(nn.Module):
         Applies FlashAttention to the input tensor.
 
         Args:
-            x: The input tensor of shape (batch, seq_len, dim).
+            x: Input tensor (batch, seq_len, dim).
             mask: An optional mask to prevent attention to certain positions.
 
         Returns:
-            The output tensor of shape (batch, seq_len, dim).
+            Output tensor (batch, seq_len, dim).
         """
         batch, seq_len, dim = x.shape
         # Project queries, keys, values
@@ -86,12 +88,12 @@ class TransformerLayer(nn.Module):
     """
     def __init__(self, dim: int, num_heads: int, ffn_dim: int, dropout: float = 0.1):
         """
-        Initializes the TransformerLayer module.
+        Initialize TransformerLayer.
 
         Args:
-            dim: The input dimension.
-            num_heads: The number of attention heads.
-            ffn_dim: The dimension of the feed-forward network.
+            dim: Input dimension.
+            num_heads: Number of attention heads.
+            ffn_dim: Dimension of the feed-forward network.
             dropout: The dropout probability.
         """
         super().__init__()
@@ -114,7 +116,7 @@ class TransformerLayer(nn.Module):
             mask: An optional mask.
 
         Returns:
-            The output tensor.
+            Output tensor.
         """
         # Attention with residual connection
         x = x + self.dropout(self.attn(self.norm1(x), mask))
@@ -129,10 +131,10 @@ class VQVAE(nn.Module):
     """
     def __init__(self, config: ModelConfig):
         """
-        Initializes the VQ-VAE module using parameters from ModelConfig.
+        Initialize VQ-VAE from ModelConfig.
 
         Args:
-            config: The model configuration object.
+            config: Model configuration object.
         """
         super().__init__()
         self.codebook_size = config.vq_codebook_size
@@ -172,7 +174,7 @@ class VQVAE(nn.Module):
             z: The input tensor.
 
         Returns:
-            The quantized tensor and the indices of the codebook entries.
+            Tuple of (quantized_tensor, indices of codebook_entries).
         """
         z_flat = z.flatten(0, -2)  # [batch*H*W, codebook_dim]
         distances = torch.cdist(z_flat, self.codebook)  # [batch*H*W, codebook_size]
@@ -188,9 +190,9 @@ class VQVAE(nn.Module):
             x: The input image.
 
         Returns:
-            The reconstructed image and the indices of the codebook entries.
+            Tuple of (reconstructed_image, indices of codebook_entries).
         """
-        z = self.encoder(x)  # [batch, codebook_dim, 64, 64]
+        z = self.encoder(x)  # [batch, codebook_dim, H', W']
         z_quantized, indices = self.quantize(z)
         x_recon = self.decoder(z_quantized)
         return x_recon, indices
@@ -200,13 +202,13 @@ class TextEncoder(nn.Module):
     """Encodes text tokens into embeddings with positional encoding."""
     def __init__(self, config: ModelConfig):
         """
-        Initializes the TextEncoder module using parameters from ModelConfig.
+        Initialize TextEncoder from ModelConfig.
 
         Args:
-            config: The model configuration object.
+            config: Model configuration object.
         """
         super().__init__()
-        self.embedding = nn.Embedding(config.vocab_size, config.dim)
+        self.embedding = nn.Embedding(config.text_vocab_size + config.vq_codebook_size, config.dim)
         # Create positional encoding up to max_seq_len
         self.pos_encoding = self._create_pos_encoding(config.max_seq_len, config.dim)
         # Register buffer makes it part of the state_dict but not trainable
@@ -221,7 +223,7 @@ class TextEncoder(nn.Module):
             dim: The dimension of the embeddings.
 
         Returns:
-            The positional encodings tensor.
+            Positional encodings tensor.
         """
         pe = torch.zeros(max_len, dim)
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
@@ -238,7 +240,7 @@ class TextEncoder(nn.Module):
             tokens: The input text tokens.
 
         Returns:
-            The embeddings tensor.
+            Embeddings tensor.
         """
         x = self.embedding(tokens)
         x = x + self.pos_encoding[:tokens.size(1), :].to(x.device)
@@ -248,10 +250,10 @@ class ImageEncoder(nn.Module):
     """Vision Transformer (ViT) like encoder for image input."""
     def __init__(self, config: ModelConfig):
         """
-        Initializes the ImageEncoder module using parameters from ModelConfig.
+        Initialize ImageEncoder (ViT-like) from ModelConfig.
 
         Args:
-            config: The model configuration object.
+            config: Model configuration object.
         """
         super().__init__()
         image_height, image_width = config.image_size, config.image_size
@@ -294,7 +296,7 @@ class ImageEncoder(nn.Module):
             x: Input image tensor of shape (batch, channels, height, width).
 
         Returns:
-            Embeddings tensor of shape (batch, num_patches + 1, dim).
+            Image embeddings tensor (batch, num_patches + 1, dim).
         """
         B = x.shape[0]
         # Convert image to patches and project
@@ -314,10 +316,10 @@ class AudioEncoder(nn.Module):
     """Simplified 1D CNN encoder for audio."""
     def __init__(self, config: ModelConfig):
         """
-        Initializes the AudioEncoder module using parameters from ModelConfig.
+        Initialize AudioEncoder (simplified 1D CNN) from ModelConfig.
 
         Args:
-            config: The model configuration object.
+            config: Model configuration object.
         """
         super().__init__()
         # Simple 1D convolution to extract features
@@ -333,7 +335,7 @@ class AudioEncoder(nn.Module):
             x: Input audio tensor of shape (batch, 1, audio_seq_len).
 
         Returns:
-            Embeddings tensor of shape (batch, output_seq_len, dim).
+            Audio embeddings tensor (batch, output_seq_len, dim).
         """
         # Apply convolution
         x = self.conv(x)  # [batch, dim, output_seq_len]
@@ -355,10 +357,10 @@ class MultimodalLLM(nn.Module):
     """
     def __init__(self, config: ModelConfig):
         """
-        Initializes the MultimodalLLM using parameters from ModelConfig.
+        Initialize MultimodalLLM from ModelConfig.
 
         Args:
-            config: The model configuration object.
+            config: Model configuration object.
         """
         super().__init__()
         self.config = config
@@ -377,7 +379,7 @@ class MultimodalLLM(nn.Module):
 
         # Final layer norm and output head
         self.norm = nn.LayerNorm(config.dim)
-        self.head = nn.Linear(config.dim, config.vocab_size) # Predicts next token ID
+        self.head = nn.Linear(config.dim, config.text_vocab_size + config.vq_codebook_size) # Predicts next token ID
 
     def _prepare_inputs(self, text_tokens: Optional[torch.Tensor] = None,
                         images: Optional[torch.Tensor] = None,
@@ -438,7 +440,7 @@ class MultimodalLLM(nn.Module):
             attention_mask: Optional custom attention mask. If None, a causal mask is generated.
 
         Returns:
-            Output logits tensor of shape (batch, combined_seq_len, vocab_size).
+            Output logits (batch, combined_seq_len, vocab_size).
         """
         # 1. Encode and combine inputs
         x = self._prepare_inputs(text_tokens, images, audio)
@@ -488,7 +490,7 @@ class MultimodalLLM(nn.Module):
             top_k: If set, only sample from the top k most likely tokens.
 
         Returns:
-            Generated sequence of token IDs (batch, total_seq_len).
+            Generated token IDs (batch, total_seq_len).
         """
         self.eval() # Set model to evaluation mode
 
@@ -543,8 +545,8 @@ if __name__ == "__main__":
         num_heads=8,
         ffn_dim=2048,
         max_seq_len=512,
-        vocab_size=10000, # Smaller vocab
-        vq_codebook_size=1024,
+        text_vocab_size=20000, # Smaller text vocab for example
+        vq_codebook_size=1024, # Using the example vq_codebook_size for image tokens
         vq_codebook_dim=128,
         image_size=64, # Smaller image
         patch_size=16
@@ -562,7 +564,7 @@ if __name__ == "__main__":
     image_size = config.image_size
     audio_seq_len = 2000 # Example audio length
 
-    dummy_text = torch.randint(0, config.vocab_size, (batch_size, text_seq_len))
+    dummy_text = torch.randint(0, config.text_vocab_size, (batch_size, text_seq_len))
     dummy_image = torch.randn(batch_size, 3, image_size, image_size)
     dummy_audio = torch.randn(batch_size, 1, audio_seq_len)
 
@@ -575,7 +577,7 @@ if __name__ == "__main__":
     print("\nTesting Forward Pass...")
     try:
         logits = model(text_tokens=dummy_text, images=dummy_image, audio=dummy_audio)
-        print(f"  Output Logits Shape: {logits.shape}") # Should be (batch_size, combined_seq_len, vocab_size)
+        print(f"  Output Logits Shape: {logits.shape}") # Should be (batch_size, combined_seq_len, config.text_vocab_size + config.vq_codebook_size)
     except Exception as e:
         print(f"  Forward pass failed: {e}")
         import traceback
@@ -586,7 +588,7 @@ if __name__ == "__main__":
     print("\nTesting Generation...")
     try:
         # Generate starting from a text prompt
-        prompt = torch.randint(0, config.vocab_size, (1, 10)) # Single prompt, length 10
+        prompt = torch.randint(0, config.text_vocab_size, (1, 10)) # Single prompt, length 10
         generated_tokens = model.generate(text_prompt=prompt, max_new_tokens=20)
         print(f"  Generated Token Sequence Shape: {generated_tokens.shape}")
         print(f"  Generated Tokens (first prompt): {generated_tokens[0].tolist()}")

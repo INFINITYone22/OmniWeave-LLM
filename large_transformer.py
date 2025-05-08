@@ -1,5 +1,9 @@
+# Copyright 2024 INFINITYone22 github. All rights reserved.
+
 import torch
 import torch.nn as nn
+import math # Ensure math is imported for math.sqrt
+from typing import Optional # Ensure Optional is imported
 
 class LargeTransformer(nn.Module):
     """
@@ -10,18 +14,18 @@ class LargeTransformer(nn.Module):
     It uses learned positional embeddings.
     """
     def __init__(self, num_layers: int = 262, d_model: int = 15360, num_heads: int = 120,
-                 d_ff: int = 61440, vocab_size: int = 50000, max_seq_len: int = 1024, dropout: float = 0.1):
+                 d_ff: int = 61440, vocab_size: int = 128000, max_seq_len: int = 1024, dropout: float = 0.1):
         """
-        Initializes the LargeTransformer model.
+        Initializes the LargeTransformer.
 
         Args:
             num_layers: Number of transformer encoder layers.
-            d_model: The dimensionality of the model (embeddings and hidden states).
-            num_heads: The number of attention heads in the multi-head attention mechanism.
-            d_ff: The dimensionality of the feed-forward network layer.
-            vocab_size: The size of the vocabulary.
-            max_seq_len: The maximum sequence length for positional embeddings.
-            dropout: The dropout probability.
+            d_model: Dimensionality of the model (embeddings and hidden states).
+            num_heads: Number of attention heads.
+            d_ff: Dimensionality of the feed-forward network.
+            vocab_size: Vocabulary size.
+            max_seq_len: Maximum sequence length for positional embeddings.
+            dropout: Dropout probability.
         """
         super().__init__()
         self.d_model = d_model
@@ -50,7 +54,7 @@ class LargeTransformer(nn.Module):
 
     def _init_weights(self, module: nn.Module):
         """
-        Initializes the weights of the model layers.
+        Initializes the weights of model layers.
 
         Applies normal initialization to Linear and Embedding layers.
         Initializes LayerNorm biases to zero and weights to one.
@@ -78,12 +82,11 @@ class LargeTransformer(nn.Module):
         Performs the forward pass of the Transformer encoder.
 
         Args:
-            src: Input tensor of shape (batch_size, sequence_length) containing token IDs.
-            src_mask: The additive mask for the src sequence (optional). Shape (sequence_length, sequence_length).
-            src_key_padding_mask: The mask for src keys per batch (optional). Shape (batch_size, sequence_length).
-
+            src: Input tensor (batch_size, sequence_length) of token IDs.
+            src_mask: Additive mask for the src sequence (optional). Shape (sequence_length, sequence_length).
+            src_key_padding_mask: Mask for src keys per batch (optional). Shape (batch_size, sequence_length).
         Returns:
-            Output tensor of shape (batch_size, sequence_length, vocab_size).
+            Output tensor (batch_size, sequence_length, vocab_size).
         """
         seq_len = src.size(1)
         max_pos_len = self.pos_embedding.size(1)
@@ -105,57 +108,28 @@ class LargeTransformer(nn.Module):
         output = self.output_layer(output)
         return output
 
-# Hyperparameters (Consider moving to a config file or class for larger projects)
-num_layers = 262      # Number of layers
-d_model = 15360       # Hidden dimension
-num_heads = 120       # Number of attention heads
-d_ff = 61440          # Feedforward dimension
-vocab_size = 50000    # Vocabulary size
-max_seq_len = 1024    # Max sequence length for positional embeddings
-
-# Instantiate the model (Illustrative - requires significant resources)
-# model = LargeTransformer(
-#     num_layers=num_layers,
-#     d_model=d_model,
-#     num_heads=num_heads,
-#     d_ff=d_ff,
-#     vocab_size=vocab_size,
-#     max_seq_len=max_seq_len
-# )
-
-# Notes:
-# 1. Memory: With 742B parameters at FP4 (0.5 bytes each), parameter memory is ~345.6 GB,
-#    leaving ~38.4 GB for activations within 384 GB total memory.
-# 2. Parallelism: This model requires model parallelism (e.g., via Megatron-LM or DeepSpeed)
-#    across multiple GB200 Superchips, as it exceeds single-GPU capacity.
-# 3. Precision: FP4 is assumed to be handled by GB200 hardware; computations here use FP32/FP16.
-#    Custom FP4 quantization would need specialized libraries or hardware support.
-# 4. Compute-Bottlenecked: For batch_size=1, seq_len=1024, arithmetic intensity > 2500,
-#    ensuring compute-bound performance on GB200.
-
-# Example usage (Illustrative, not executable here due to scale):
-# if __name__ == "__main__":
-#     # Instantiate the model with defined hyperparameters
-#     model = LargeTransformer(
-#         num_layers=num_layers,
-#         d_model=d_model,
-#         num_heads=num_heads,
-#         d_ff=d_ff,
-#         vocab_size=vocab_size,
-#         max_seq_len=max_seq_len
-#     )
-#     print("Model instantiated (illustrative).")
+# Model Configuration & Operational Notes:
+# The LargeTransformer class is designed with the following considerations,
+# assuming a configuration similar to the __init__ defaults (e.g., ~742B parameters if d_model=15360, num_layers=262, etc.).
 #
-#     # Create dummy input data
-#     # Batch size 1, sequence length 512 (less than max_seq_len)
-#     input_ids = torch.randint(0, vocab_size, (1, 512))
-#     print(f"Dummy input shape: {input_ids.shape}")
+# 1. Target Precision: FP4
+#    - Parameter Memory: For a ~742B model, FP4 (0.5 bytes/param) implies ~345.6 GB for parameters.
+#    - System Assumption: FP4 precision is assumed to be handled by underlying hardware
+#      (e.g., NVIDIA GB200 Superchip's Transformer Engine) and specialized libraries.
+#    - Model Code: The Python code uses standard PyTorch modules (FP32/FP16).
+#      Actual FP4 quantization requires external mechanisms (not implemented in this script).
 #
-#     # Perform a forward pass (requires immense resources)
-#     # with torch.no_grad():
-#     #     try:
-#     #         # No masks provided in this simple example
-#     #         output = model(input_ids)
-#     #         print(f"Output shape: {output.shape}")
-#     #     except Exception as e:
-#     #         print(f"Forward pass failed (as expected due to scale): {e}")
+# 2. Memory and Parallelism:
+#    - Given typical HBM capacities (e.g., 384 GB on a GB200 accelerator node),
+#      activations and workspace must fit alongside parameters.
+#    - Requires model parallelism (e.g., tensor, pipeline, sequence parallelism using
+#      frameworks like Megatron-LM or DeepSpeed) across multiple accelerators.
+#
+# 3. Performance Profile:
+#    - Aimed to be compute-bottlenecked on suitable hardware.
+#    - For example, with batch_size=1, seq_len=1024, the arithmetic intensity
+#      is expected to be high (> 2500 ops/byte), suitable for GB200-like systems.
+#
+# Note: The hyperparameter values in __init__ are illustrative for a very large model.
+# Actual deployment would require careful tuning and resource management.
+# (End of illustrative example code and notes from original file)
