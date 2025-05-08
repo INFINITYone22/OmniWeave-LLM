@@ -1,4 +1,4 @@
-# Copyright 2024 INFINITYone22 github. All rights reserved.
+# Copyright 2025 INFINITYone22 github. All rights reserved.
 
 import torch
 import torch.nn as nn
